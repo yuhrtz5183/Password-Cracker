@@ -3,6 +3,7 @@
 import hashlib
 import argparse
 import json
+import itertools
 from itertools import product, combinations_with_replacement
 from string import digits
 from time import time
@@ -167,37 +168,29 @@ def generate_digit_insertions(words: List[str], max_digits: int) -> List[str]:
 # -------------------------
 # Word Combinations
 # -------------------------
-def try_word_combinations(dictionary: List[str], max_words: int, remaining: Set[str],
-                          found: Dict[str, str], max_digits: int = 10):
 
-    print(f"[WORDS] Starting word combinations...")
+def try_word_combinations(dictionary: List[str], max_words: int,
+                          remaining: Set[str], found: Dict[str, str]):
+    
+    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Starting pure word combinations (1-{max_words})")
 
-    dict_limit = min(len(dictionary), 200) if max_words >= 3 else len(dictionary)
-    dict_subset = dictionary[:dict_limit]
+    max_words = min(max_words, 4)
+    dict_subset = dictionary
 
-    from itertools import product as cartesian
+    tested_candidates.clear()
 
     for num_words in range(1, max_words + 1):
         if not remaining:
             return
 
-        print(f"[WORDS] Generating {num_words}-word combos...")
-        for combo in cartesian(dict_subset, repeat=num_words):
-            variants = generate_digit_insertions(list(combo), max_digits)
-            for v in variants:
-                if not remaining:
-                    return
-                check_and_crack(v, remaining, found)
+        print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Trying {num_words}-word combinations...")
 
-
-def try_repeated_words(dictionary: List[str], remaining: Set[str], found: Dict[str, str], max_digits: int = 10):
-    print("[REPEAT] Trying repeated-word patterns...")
-    for w in dictionary:
-        variants = generate_digit_insertions([w, w], max_digits)
-        for v in variants:
+        for combo in itertools.product(dict_subset, repeat=num_words):
             if not remaining:
                 return
-            check_and_crack(v, remaining, found)
+
+            candidate = "".join(combo)
+            check_and_crack(candidate, remaining, found)
 
 
 # ----------------
@@ -208,14 +201,14 @@ import time
 def try_password_patterns(remaining: Set[str], found: Dict[str, str], dictionary: List[str]):
     print(f"[INFO] Starting cracking. Targets: {len(remaining)}, Dictionary: {len(dictionary)}")
 
-    # ---- STAGE 1 ----
-    start = time.time()
-    print(f"[{time.strftime('%H:%M:%S')}] [STAGE 1] Numeric brute force started")
+    # # ---- STAGE 1 ----
+    # start = time.time()
+    # print(f"[{time.strftime('%H:%M:%S')}] [STAGE 1] Numeric brute force started")
 
-    try_numeric_parallel(remaining, found)
+    # try_numeric_parallel(remaining, found)
 
-    end = time.time()
-    print(f"[{time.strftime('%H:%M:%S')}] [STAGE 1] Complete (elapsed: {end - start:.2f}s)")
+    # end = time.time()
+    # print(f"[{time.strftime('%H:%M:%S')}] [STAGE 1] Complete (elapsed: {end - start:.2f}s)")
 
     # ---- STAGE 2 ----
     if remaining:
