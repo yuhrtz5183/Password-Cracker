@@ -4,11 +4,11 @@ import hashlib
 import argparse
 import json
 import itertools
+import multiprocessing as mp
 from itertools import product, combinations_with_replacement
 from string import digits
 from time import time
 from typing import Dict, Set, List
-
 from multiprocessing import Pool, cpu_count, Manager
 
 
@@ -35,9 +35,18 @@ def load_password_hashes(path: str) -> (Dict[str, str], Dict[str, str]):
 
 
 def load_dictionary(path: str) -> List[str]:
-    return [line.strip().lower()
-            for line in open(path, 'r', encoding='utf-8', errors='ignore')
-            if line.strip()]
+    words = []
+    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            w = line.strip().lower()
+
+            # Remove BOM if present
+            if w.startswith("\ufeff"):
+                w = w.replace("\ufeff", "")
+
+            if w:
+                words.append(w)
+    return words
 
 
 # -------------------------
@@ -215,37 +224,49 @@ def try_repeated_words(dictionary, remaining, found, max_repeat=4):
             candidate = word * repeat_count
             check_and_crack(candidate, remaining, found, use_cache=False)
 
-def try_word_number_combinations(dictionary, remaining, found, max_digits=6):
-    print(f"[{time.strftime('%H:%M:%S')}] [WORDNUM] Starting word+number combinations...")
 
-    _check = check_and_crack  # Local reference (faster)
-    _remaining = remaining
+def try_word_number_combinations(dictionary, remaining, found, max_digits=5):
+    print(f"[{time.strftime('%H:%M:%S')}] [WORDNUM] Starting word+number combinations")
 
-    # Pre-generate digit strings for each digit count
-    digit_strings = {
-        d: [str(i).zfill(d) for i in range(10**d)]
-        for d in range(1, max_digits + 1)
-    }
+    # Pre-generate all digit strings
+    print(f"[WORDNUM] Pre-generating digit strings...")
+    digit_strings = [f"{n:0{d}}" for d in range(1, max_digits + 1)
+                     for n in range(10 ** d)]
+    print(f"[WORDNUM] Generated {len(digit_strings)} digit combinations")
 
-    for word in dictionary:
-        if not _remaining:
-            break
+    remaining_set = set(remaining)
+    total_words = len(dictionary)
 
-        for d in range(1, max_digits + 1):
-            dlist = digit_strings[d]
+    batch_size = 1000
+    count = 0
+    words_processed = 0
 
-            for ds in dlist:
-                if not _remaining:
-                    break
+    sha1 = hashlib.sha1
+    encode = str.encode
 
-                # word + digits
-                _check(word + ds, _remaining, found, use_cache=False)
+    for start in range(0, total_words, batch_size):
+        batch = dictionary[start : start + batch_size]
+        if not batch:
+            continue  # Safety check, though shouldn't happen
 
-                # digits + word
-                _check(ds + word, _remaining, found, use_cache=False)
+        for word in batch:
+            word = word.strip()  # Remove extra whitespace if present
 
-    print(f"[{time.strftime('%H:%M:%S')}] [WORDNUM] Completed word-number combinations.")
+            # --- Check word+digits and digits+word ---
+            for ds in digit_strings:
+                for cand in (word + ds, ds + word):
+                    h = sha1(encode(cand)).hexdigest()
+                    if h in remaining_set:
+                        found[h] = cand
+                        remaining_set.remove(h)
+                        remaining.remove(h)
+                        count += 1
+                        print(f"[{time.strftime('%H:%M:%S')}] [FOUND] {cand} -> {h}")
 
+        words_processed += len(batch)
+        print(f"[WORDNUM] Processed {words_processed}/{total_words} words ({count} found so far)")
+
+    print(f"[{time.strftime('%H:%M:%S')}] [WORDNUM] Completed. Found {count} passwords.")
 
 
 # ----------------
@@ -265,15 +286,15 @@ def try_password_patterns(remaining: Set[str], found: Dict[str, str], dictionary
     # end = time.time()
     # print(f"[{time.strftime('%H:%M:%S')}] [STAGE 1] Complete (elapsed: {end - start:.2f}s)")
 
-    # # ---- STAGE 2 ----
-    # if remaining:
-    #     start = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Word combinations started")
+    # ---- STAGE 2 ----
+    if remaining:
+        start = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Word combinations started")
 
-    #     try_word_combinations(dictionary, 4, remaining, found)
+        try_word_combinations(dictionary, 3, remaining, found)
 
-    #     end = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Complete (elapsed: {end - start:.2f}s)")
+        end = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Complete (elapsed: {end - start:.2f}s)")
 
     # # ---- STAGE 3 ----
     # if remaining:
@@ -285,18 +306,29 @@ def try_password_patterns(remaining: Set[str], found: Dict[str, str], dictionary
     #     end = time.time()
     #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 3] Complete (elapsed: {end - start:.2f}s)")
     
-    # ---- STAGE 4 ----
-    if remaining:
-        start = time.time()
-        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] Word and number combinations started")
+    # # ---- STAGE 4 ----
+    # if remaining:
+    #     start = time.time()
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] Word and number combinations started")
 
-        try_word_number_combinations(dictionary, remaining, found)
+    #     try_word_number_combinations(dictionary, remaining, found)
 
-        end = time.time()
-        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] Complete (elapsed: {end - start:.2f}s)")
+    #     end = time.time()
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] Complete (elapsed: {end - start:.2f}s)")
 
+    # # ---- TEST ----
+    # if remaining:
+    #     start = time.time()
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE TEST] Word and number combinations started")
+
+    #     try_word_six_digit_combinations(dictionary, remaining, found)
+
+    #     end = time.time()
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE TEST] Complete (elapsed: {end - start:.2f}s)")
 
     print(f"[INFO] Cracking finished. Found: {len(found)}, Remaining: {len(remaining)}")
+
+    
 
 
 # -------------------------
