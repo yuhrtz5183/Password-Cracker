@@ -183,28 +183,137 @@ def generate_digit_insertions(words: List[str], max_digits: int) -> List[str]:
 # Word Combinations
 # -------------------------
 
+# -------------------------
+# PARALLEL WORD WORKERS
+# -------------------------
+def word_worker(args):
+    """Worker function for parallel word combination testing."""
+    dict_subset, start_idx, end_idx, remaining_set, num_words = args
+    
+    sha1 = hashlib.sha1
+    local_found = {}
+    dict_len = len(dict_subset)
+    
+    # Convert index range to combinations
+    for idx in range(start_idx, end_idx):
+        # Convert linear index to combination indices
+        combo = []
+        temp_idx = idx
+        for _ in range(num_words):
+            combo.append(dict_subset[temp_idx % dict_len])
+            temp_idx //= dict_len
+        
+        candidate = "".join(combo)
+        h = sha1(candidate.encode()).hexdigest()
+        
+        if h in remaining_set:
+            local_found[h] = candidate
+    
+    return local_found
+
+
 def try_word_combinations(dictionary: List[str], max_words: int,
                           remaining: Set[str], found: Dict[str, str]):
     
-    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Starting pure word combinations (1-{max_words})")
+    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Starting word combinations (1-{max_words})")
 
     max_words = min(max_words, 4)
-    dict_subset = dictionary
-
+    
+    # Adaptive dictionary limits to balance speed vs coverage
+    # Lower limits for higher word counts to prevent combinatorial explosion
+    # Note: "monday" @1910, "vein" @1915, "forest" @5417 - need 5500+ for 3-word
+    dict_limits = {
+        1: len(dictionary),        # All words for single word
+        2: min(5000, len(dictionary)),  # 5000 for 2-word (25M combos)
+        3: min(5500, len(dictionary)),  # 5500 for 3-word (covers monday, vein, forest)
+        4: min(200, len(dictionary))    # 200 for 4-word (1.6B combos)
+    }
+    
     tested_candidates.clear()
 
     for num_words in range(1, max_words + 1):
         if not remaining:
+            print(f"[WORDS] All passwords found! Stopping at {num_words}-word stage.")
             return
 
-        print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Trying {num_words}-word combinations...")
-
-        for combo in itertools.product(dict_subset, repeat=num_words):
-            if not remaining:
-                return
-
-            candidate = "".join(combo)
-            check_and_crack(candidate, remaining, found, use_cache=False)
+        # Get appropriate dictionary subset
+        dict_limit = dict_limits.get(num_words, 100)
+        dict_subset = dictionary[:dict_limit]
+        
+        total_combos = len(dict_subset) ** num_words
+        print(f"[WORDS] Trying {num_words}-word combinations...")
+        print(f"[INFO] Using {len(dict_subset)} words, ~{total_combos:,} combinations")
+        
+        if total_combos > 1_000_000_000:
+            print(f"[WARN] Large search space ({total_combos:,} combos) - this may take a while")
+        
+        # Use parallel processing for large search spaces
+        remaining_set = set(remaining)  # Snapshot for workers
+        cores = cpu_count()
+        
+        # For small search spaces, use single-threaded (less overhead)
+        if total_combos < 1_000_000 or num_words == 1:
+            # Single-threaded for small sets (faster due to no overhead)
+            count = 0
+            last_report_time = time.time()
+            sha1 = hashlib.sha1  # Local reference
+            
+            for combo in itertools.product(dict_subset, repeat=num_words):
+                if not remaining:
+                    print(f"[{time.strftime('%H:%M:%S')}][WORDS] All passwords found during {num_words}-word combinations!")
+                    return
+                
+                candidate = "".join(combo)
+                h = sha1(candidate.encode()).hexdigest()
+                
+                if h in remaining:
+                    found[h] = candidate
+                    remaining.remove(h)
+                    print(f"[{time.strftime('%H:%M:%S')}] [FOUND] {candidate} -> {h}")
+                
+                count += 1
+                
+                # Progress reporting
+                if count % 100000 == 0:
+                    elapsed = time.time() - last_report_time
+                    rate = 100000 / elapsed if elapsed > 0 else 0
+                    print(f"[WORDS] {num_words}-word: {count:,}/{total_combos:,} | "
+                          f"Rate: {rate:,.0f}/sec | Remaining: {len(remaining)}")
+                    last_report_time = time.time()
+        else:
+            # Parallel processing for large search spaces
+            print(f"[{time.strftime('%H:%M:%S')}][WORDS] Using {cores} CPU cores for parallel processing...")
+            chunk_size = max(10000, total_combos // (cores * 4))  # Reasonable chunk size
+            
+            ranges = []
+            for start in range(0, total_combos, chunk_size):
+                end = min(start + chunk_size, total_combos)
+                ranges.append((dict_subset, start, end, remaining_set, num_words))
+            
+            # Process in batches to avoid too many processes
+            batch_size = cores * 2
+            for i in range(0, len(ranges), batch_size):
+                batch = ranges[i:i + batch_size]
+                with Pool(min(cores, len(batch))) as pool:
+                    results = pool.map(word_worker, batch)
+                
+                # Merge results
+                for r in results:
+                    for h, pwd in r.items():
+                        if h in remaining:
+                            found[h] = pwd
+                            remaining.remove(h)
+                            print(f"[{time.strftime('%H:%M:%S')}] [FOUND] {pwd} -> {h}")
+                            remaining_set.discard(h)  # Update snapshot
+                
+                if not remaining:
+                    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] All passwords found during {num_words}-word combinations!")
+                    return
+                
+                print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Processed {min(i + batch_size, len(ranges))}/{len(ranges)} batches | "
+                      f"Remaining: {len(remaining)}")
+        
+        print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Completed {num_words}-word combinations: {len(remaining)} passwords remaining")
 
 def try_repeated_words(dictionary, remaining, found, max_repeat=4):
 
@@ -326,7 +435,9 @@ def try_password_patterns(remaining: Set[str], found: Dict[str, str], dictionary
     #     end = time.time()
     #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE TEST] Complete (elapsed: {end - start:.2f}s)")
 
-    print(f"[INFO] Cracking finished. Found: {len(found)}, Remaining: {len(remaining)}")
+    # print(f"[INFO] Cracking finished. Found: {len(found)}, Remaining: {len(remaining)}")
+
+    
 
     
 
