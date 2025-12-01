@@ -211,109 +211,28 @@ def word_worker(args):
     
     return local_found
 
-
 def try_word_combinations(dictionary: List[str], max_words: int,
                           remaining: Set[str], found: Dict[str, str]):
     
-    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Starting word combinations (1-{max_words})")
+    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Starting pure word combinations (1-{max_words})")
 
     max_words = min(max_words, 4)
-    
-    # Adaptive dictionary limits to balance speed vs coverage
-    # Lower limits for higher word counts to prevent combinatorial explosion
-    # Note: "monday" @1910, "vein" @1915, "forest" @5417 - need 5500+ for 3-word
-    dict_limits = {
-        1: len(dictionary),        # All words for single word
-        2: min(5000, len(dictionary)),  # 5000 for 2-word (25M combos)
-        3: min(5500, len(dictionary)),  # 5500 for 3-word (covers monday, vein, forest)
-        4: min(200, len(dictionary))    # 200 for 4-word (1.6B combos)
-    }
-    
+    dict_subset = dictionary
+
     tested_candidates.clear()
 
     for num_words in range(1, max_words + 1):
         if not remaining:
-            print(f"[WORDS] All passwords found! Stopping at {num_words}-word stage.")
             return
 
-        # Get appropriate dictionary subset
-        dict_limit = dict_limits.get(num_words, 100)
-        dict_subset = dictionary[:dict_limit]
-        
-        total_combos = len(dict_subset) ** num_words
-        print(f"[WORDS] Trying {num_words}-word combinations...")
-        print(f"[INFO] Using {len(dict_subset)} words, ~{total_combos:,} combinations")
-        
-        if total_combos > 1_000_000_000:
-            print(f"[WARN] Large search space ({total_combos:,} combos) - this may take a while")
-        
-        # Use parallel processing for large search spaces
-        remaining_set = set(remaining)  # Snapshot for workers
-        cores = cpu_count()
-        
-        # For small search spaces, use single-threaded (less overhead)
-        if total_combos < 1_000_000 or num_words == 1:
-            # Single-threaded for small sets (faster due to no overhead)
-            count = 0
-            last_report_time = time.time()
-            sha1 = hashlib.sha1  # Local reference
-            
-            for combo in itertools.product(dict_subset, repeat=num_words):
-                if not remaining:
-                    print(f"[{time.strftime('%H:%M:%S')}][WORDS] All passwords found during {num_words}-word combinations!")
-                    return
-                
-                candidate = "".join(combo)
-                h = sha1(candidate.encode()).hexdigest()
-                
-                if h in remaining:
-                    found[h] = candidate
-                    remaining.remove(h)
-                    print(f"[{time.strftime('%H:%M:%S')}] [FOUND] {candidate} -> {h}")
-                
-                count += 1
-                
-                # Progress reporting
-                if count % 100000 == 0:
-                    elapsed = time.time() - last_report_time
-                    rate = 100000 / elapsed if elapsed > 0 else 0
-                    print(f"[WORDS] {num_words}-word: {count:,}/{total_combos:,} | "
-                          f"Rate: {rate:,.0f}/sec | Remaining: {len(remaining)}")
-                    last_report_time = time.time()
-        else:
-            # Parallel processing for large search spaces
-            print(f"[{time.strftime('%H:%M:%S')}][WORDS] Using {cores} CPU cores for parallel processing...")
-            chunk_size = max(10000, total_combos // (cores * 4))  # Reasonable chunk size
-            
-            ranges = []
-            for start in range(0, total_combos, chunk_size):
-                end = min(start + chunk_size, total_combos)
-                ranges.append((dict_subset, start, end, remaining_set, num_words))
-            
-            # Process in batches to avoid too many processes
-            batch_size = cores * 2
-            for i in range(0, len(ranges), batch_size):
-                batch = ranges[i:i + batch_size]
-                with Pool(min(cores, len(batch))) as pool:
-                    results = pool.map(word_worker, batch)
-                
-                # Merge results
-                for r in results:
-                    for h, pwd in r.items():
-                        if h in remaining:
-                            found[h] = pwd
-                            remaining.remove(h)
-                            print(f"[{time.strftime('%H:%M:%S')}] [FOUND] {pwd} -> {h}")
-                            remaining_set.discard(h)  # Update snapshot
-                
-                if not remaining:
-                    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] All passwords found during {num_words}-word combinations!")
-                    return
-                
-                print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Processed {min(i + batch_size, len(ranges))}/{len(ranges)} batches | "
-                      f"Remaining: {len(remaining)}")
-        
-        print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Completed {num_words}-word combinations: {len(remaining)} passwords remaining")
+        print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Trying {num_words}-word combinations...")
+
+        for combo in itertools.product(dict_subset, repeat=num_words):
+            if not remaining:
+                return
+
+            candidate = "".join(combo)
+            check_and_crack(candidate, remaining, found, use_cache=False)
 
 def try_repeated_words(dictionary, remaining, found, max_repeat=4):
 
@@ -333,7 +252,7 @@ def try_repeated_words(dictionary, remaining, found, max_repeat=4):
             candidate = word * repeat_count
             check_and_crack(candidate, remaining, found, use_cache=False)
 
-
+   
 def try_word_number_combinations(dictionary, remaining, found, max_digits=5):
     print(f"[{time.strftime('%H:%M:%S')}] [WORDNUM] Starting word+number combinations")
 
@@ -377,6 +296,57 @@ def try_word_number_combinations(dictionary, remaining, found, max_digits=5):
 
     print(f"[{time.strftime('%H:%M:%S')}] [WORDNUM] Completed. Found {count} passwords.")
 
+def try_word_combinations_first_small_words(dictionary, remaining, found, max_words=4):
+    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Starting optimized multi-word cracking")
+
+    dictionary = dictionary[:2500]
+
+    # Only short, common words (<=7 letters)
+    short_words = [w.strip() for w in dictionary if 1 <= len(w.strip()) <= 7]
+    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Using {len(short_words)} short words (<=7 letters, first 2500 words)")
+
+    remaining_set = set(remaining)
+
+    sha1 = hashlib.sha1
+    enc = str.encode
+
+    def test_candidate(candidate):
+        h = sha1(enc(candidate)).hexdigest()
+        if h in remaining_set:
+            found[h] = candidate
+            remaining_set.remove(h)
+            remaining.remove(h)
+            print(f"[FOUND] {candidate} -> {h}")
+            return True
+        return False
+
+    # 3-WORD
+    if max_words >= 3:
+        print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Trying 3-word combinations... (optimized)")
+        count = 0
+        approx_total = len(short_words) ** 3
+
+        for w1 in short_words:
+            if not remaining_set:
+                return
+
+            for w2 in short_words:
+                # New limit: up to 21 chars total so 7+7+7 fits
+                if len(w1) + len(w2) > 21:
+                    continue
+
+                for w3 in short_words:
+                    candidate = w1 + w2 + w3
+                    # Total length cap updated to 21
+                    if len(candidate) > 21:
+                        continue
+
+                    test_candidate(candidate)
+
+                    count += 1
+                    if count % 200000000 == 0:
+                        print(f"[{time.strftime('%H:%M:%S')}][WORDS] 3-word progress: ~{count}/{approx_total}")
+
 
 # ----------------
 # Main Cracking 
@@ -400,7 +370,7 @@ def try_password_patterns(remaining: Set[str], found: Dict[str, str], dictionary
         start = time.time()
         print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Word combinations started")
 
-        try_word_combinations(dictionary, 3, remaining, found)
+        try_word_combinations(dictionary, 2, remaining, found)
 
         end = time.time()
         print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Complete (elapsed: {end - start:.2f}s)")
@@ -418,28 +388,47 @@ def try_password_patterns(remaining: Set[str], found: Dict[str, str], dictionary
     # # ---- STAGE 4 ----
     # if remaining:
     #     start = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] Word and number combinations started")
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] 1 Word and number combinations")
 
     #     try_word_number_combinations(dictionary, remaining, found)
 
     #     end = time.time()
     #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] Complete (elapsed: {end - start:.2f}s)")
 
+    # ---- STAGE 5 ----
+    if remaining:
+        start = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 5] 2 Word and number combinations")
+
+        try_word_number_combinations(dictionary, remaining, found)
+
+        end = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 5] Complete (elapsed: {end - start:.2f}s)")
+
+    # # ---- STAGE 6 ----
+    # if remaining:
+    #     start = time.time()
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 6] Word combinations started for 3 words")
+
+    #     try_word_number_combinations(dictionary, remaining, found)
+
+    #     end = time.time()
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 6] Complete (elapsed: {end - start:.2f}s)")
+
+    
+
     # # ---- TEST ----
     # if remaining:
     #     start = time.time()
     #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE TEST] Word and number combinations started")
 
-    #     try_word_six_digit_combinations(dictionary, remaining, found)
+    #     try_word_combinations_first_small_words(dictionary, remaining, found)
+
 
     #     end = time.time()
     #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE TEST] Complete (elapsed: {end - start:.2f}s)")
 
-    # print(f"[INFO] Cracking finished. Found: {len(found)}, Remaining: {len(remaining)}")
-
-    
-
-    
+    print(f"[INFO] Cracking finished. Found: {len(found)}, Remaining: {len(remaining)}")
 
 
 # -------------------------
