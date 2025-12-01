@@ -46,11 +46,14 @@ def load_dictionary(path: str) -> List[str]:
 tested_candidates: Set[str] = set()  # Avoid duplicate testing
 
 
-def check_and_crack(candidate: str, remaining: Set[str], found: Dict[str, str]) -> bool:
+def check_and_crack(candidate: str, remaining: Set[str], found: Dict[str, str], use_cache=True) -> bool:
     candidate = candidate.lower()
-    if candidate in tested_candidates:
-        return False
-    tested_candidates.add(candidate)
+
+    # Only use duplicate filtering when enabled
+    if use_cache:
+        if candidate in tested_candidates:
+            return False
+        tested_candidates.add(candidate)
 
     h = sha1_hex(candidate)
     if h in remaining:
@@ -81,6 +84,7 @@ def numeric_worker(args):
 
 
 def try_numeric_parallel(remaining: Set[str], found: Dict[str, str]):
+    tested_candidates.clear()
     print(f"[NUMERIC] Using {cpu_count()} CPU cores")
 
     # Convert remaining to a normal Python set (WAY faster than Manager dict)
@@ -118,7 +122,8 @@ def try_numeric_parallel(remaining: Set[str], found: Dict[str, str]):
         if not remaining:
             print(f"[NUMERIC] All passwords found by {length}-digit stage!")
             return
-
+        
+    tested_candidates.clear()
     print(f"[{time.strftime('%H:%M:%S')}] [NUMERIC] Stage complete")
 
 
@@ -190,7 +195,57 @@ def try_word_combinations(dictionary: List[str], max_words: int,
                 return
 
             candidate = "".join(combo)
-            check_and_crack(candidate, remaining, found)
+            check_and_crack(candidate, remaining, found, use_cache=False)
+
+def try_repeated_words(dictionary, remaining, found, max_repeat=4):
+
+    print(f"[{time.strftime('%H:%M:%S')}] [REPEAT] Checking repeated-word passwords...")
+
+    for repeat_count in range(2, max_repeat + 1):
+
+        if not remaining:
+            return
+
+        print(f"[{time.strftime('%H:%M:%S')}] [REPEAT] Trying {repeat_count}x repeats...")
+
+        for word in dictionary:
+            if not remaining:
+                return
+
+            candidate = word * repeat_count
+            check_and_crack(candidate, remaining, found, use_cache=False)
+
+def try_word_number_combinations(dictionary, remaining, found, max_digits=6):
+    print(f"[{time.strftime('%H:%M:%S')}] [WORDNUM] Starting word+number combinations...")
+
+    _check = check_and_crack  # Local reference (faster)
+    _remaining = remaining
+
+    # Pre-generate digit strings for each digit count
+    digit_strings = {
+        d: [str(i).zfill(d) for i in range(10**d)]
+        for d in range(1, max_digits + 1)
+    }
+
+    for word in dictionary:
+        if not _remaining:
+            break
+
+        for d in range(1, max_digits + 1):
+            dlist = digit_strings[d]
+
+            for ds in dlist:
+                if not _remaining:
+                    break
+
+                # word + digits
+                _check(word + ds, _remaining, found, use_cache=False)
+
+                # digits + word
+                _check(ds + word, _remaining, found, use_cache=False)
+
+    print(f"[{time.strftime('%H:%M:%S')}] [WORDNUM] Completed word-number combinations.")
+
 
 
 # ----------------
@@ -210,25 +265,36 @@ def try_password_patterns(remaining: Set[str], found: Dict[str, str], dictionary
     # end = time.time()
     # print(f"[{time.strftime('%H:%M:%S')}] [STAGE 1] Complete (elapsed: {end - start:.2f}s)")
 
-    # ---- STAGE 2 ----
+    # # ---- STAGE 2 ----
+    # if remaining:
+    #     start = time.time()
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Word combinations started")
+
+    #     try_word_combinations(dictionary, 4, remaining, found)
+
+    #     end = time.time()
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Complete (elapsed: {end - start:.2f}s)")
+
+    # # ---- STAGE 3 ----
+    # if remaining:
+    #     start = time.time()
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 3] Repeated-word patterns started")
+
+    #     try_repeated_words(dictionary, remaining, found)
+
+    #     end = time.time()
+    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 3] Complete (elapsed: {end - start:.2f}s)")
+    
+    # ---- STAGE 4 ----
     if remaining:
         start = time.time()
-        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Word combinations started")
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] Word and number combinations started")
 
-        try_word_combinations(dictionary, 4, remaining, found)
-
-        end = time.time()
-        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Complete (elapsed: {end - start:.2f}s)")
-
-    # ---- STAGE 3 ----
-    if remaining:
-        start = time.time()
-        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 3] Repeated-word patterns started")
-
-        try_repeated_words(dictionary, remaining, found)
+        try_word_number_combinations(dictionary, remaining, found)
 
         end = time.time()
-        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 3] Complete (elapsed: {end - start:.2f}s)")
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] Complete (elapsed: {end - start:.2f}s)")
+
 
     print(f"[INFO] Cracking finished. Found: {len(found)}, Remaining: {len(remaining)}")
 
@@ -245,7 +311,7 @@ def run_pipeline(password_file: str, dictionary_file: str):
 
     try_password_patterns(remaining, found, dictionary)
 
-    elapsed = time() - start_time
+    elapsed = time.time() - start_time
 
     with open("cracked_results.txt", "w", encoding="utf-8") as f:
         for h, pwd in found.items():
