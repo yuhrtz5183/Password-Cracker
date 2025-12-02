@@ -412,7 +412,7 @@ def try_two_word_number_combinations(dictionary, remaining, found):
 import time
 
 def try_password_patterns(remaining: Set[str], found: Dict[str, str], dictionary: List[str]):
-    print(f"[INFO] Starting cracking. Targets: {len(remaining)}, Dictionary: {len(dictionary)}")
+    print(f"[INFO] Start cracking passwords. Targets: {len(remaining)}, Dictionary: {len(dictionary)}")
 
     # ---- STAGE 1 ----
     start = time.time()
@@ -492,32 +492,31 @@ def run_pipeline(password_file: str, dictionary_file: str):
     elapsed = time.time() - start_time
 
     with open("cracked_results.txt", "w", encoding="utf-8") as f:
-        for h, pwd in found.items():
-            uid = hash_to_uid.get(h, "UNKNOWN")
+        sorted_entries = sorted(found.items(), key=lambda x: int(hash_to_uid[x[0]]))
+
+        for h, pwd in sorted_entries:
+            uid = hash_to_uid[h]
             f.write(f"{uid}\t{h}\t{pwd}\n")
-
-    stats = {
-        "total_hashes": len(hash_to_uid),
-        "cracked": len(found),
-        "uncracked": len(remaining),
-        "percent": len(found) / len(hash_to_uid) * 100 if hash_to_uid else 0,
-        "elapsed_seconds": elapsed,
-        "dictionary_size": len(dictionary)
-    }
-
-    with open("stats.json", "w", encoding="utf-8") as f:
-        json.dump(stats, f, indent=2)
 
     print("\n" + "=" * 40)
     print("Cracking Complete")
-    print(f"Cracked {len(found)}/{len(hash_to_uid)} ({stats['percent']:.1f}%)")
+
+    total = len(hash_to_uid)
+    cracked = len(found)
+    percent = (cracked / total) * 100
+
+    print(f"Cracked {cracked}/{total} ({percent:.1f}%)")
     print(f"Time elapsed: {elapsed:.2f}s")
+    
     if remaining:
         print(f"{len(remaining)} passwords remain uncracked")
     else:
         print("✓ ALL PASSWORDS CRACKED!")
-
-    return stats
+    
+    print("\n=== Cracked Passwords (User -> Hash -> Password) ===")
+    for h, pwd in sorted_entries:
+        uid = hash_to_uid[h]
+        print(f"{uid}\t{h}\t{pwd}")
 
 
 # -------------------------
