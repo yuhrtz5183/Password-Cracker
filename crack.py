@@ -137,49 +137,6 @@ def try_numeric_parallel(remaining: Set[str], found: Dict[str, str]):
 
 
 # -------------------------
-# Word Digit Insertion
-# -------------------------
-def generate_digit_insertions(words: List[str], max_digits: int) -> List[str]:
-    """Generate all combinations of digits in any position between words."""
-    if not words:
-        return []
-
-    results = set()
-    slots = len(words) + 1  # possible digit slots
-
-    def splits(n, k):
-        if k == 1:
-            yield (n,)
-        else:
-            for i in range(n + 1):
-                for tail in splits(n - i, k - 1):
-                    yield (i,) + tail
-
-    for total_digits in range(0, max_digits + 1):
-
-        for dist in splits(total_digits, slots):
-            parts = []
-
-            for idx, word in enumerate(words):
-                if dist[idx] > 0:
-                    for ds in product(digits, repeat=dist[idx]):
-                        parts.append(''.join(ds))
-                parts.append(word)
-
-            if dist[-1] > 0:
-                for ds in product(digits, repeat=dist[-1]):
-                    parts.append(''.join(ds))
-
-            def flatten(parts):
-                yield ''.join(parts)
-
-            for cand in flatten(parts):
-                results.add(cand)
-
-    return list(results)
-
-
-# -------------------------
 # Word Combinations
 # -------------------------
 
