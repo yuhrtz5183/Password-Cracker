@@ -297,7 +297,7 @@ def try_word_number_combinations(dictionary, remaining, found, max_digits=5):
     print(f"[{time.strftime('%H:%M:%S')}] [WORDNUM] Completed. Found {count} passwords.")
 
 def try_word_combinations_first_small_words(dictionary, remaining, found, max_words=4):
-    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Starting optimized multi-word cracking")
+    print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Starting multi-word cracking")
 
     dictionary = dictionary[:2500]
 
@@ -322,7 +322,7 @@ def try_word_combinations_first_small_words(dictionary, remaining, found, max_wo
 
     # 3-WORD
     if max_words >= 3:
-        print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Trying 3-word combinations... (optimized)")
+        print(f"[{time.strftime('%H:%M:%S')}] [WORDS] Trying 3-word combinations...")
         count = 0
         approx_total = len(short_words) ** 3
 
@@ -347,6 +347,64 @@ def try_word_combinations_first_small_words(dictionary, remaining, found, max_wo
                     if count % 200000000 == 0:
                         print(f"[{time.strftime('%H:%M:%S')}][WORDS] 3-word progress: ~{count}/{approx_total}")
 
+def try_two_word_number_combinations(dictionary, remaining, found):
+    print(f"[{time.strftime('%H:%M:%S')}] [2WORDNUM] Starting 2-word + (1-2 digit) combinations...")
+
+    remaining_set = set(remaining)
+    sha1 = hashlib.sha1
+    enc = str.encode
+
+    # Load all dictionary words
+    dict_words = [w.strip() for w in dictionary if w.strip()]
+    total_words = len(dict_words)
+
+    # Total combinations = W^2 * (10 + 100)
+    approx_total = total_words * total_words * 110
+    count = 0
+
+    for w1 in dict_words:
+        if not remaining_set:
+            break
+
+        for w2 in dict_words:
+            base = w1 + w2
+
+            # --- Try 1-digit numbers (0–9) ---
+            for n in range(10):
+                ds = str(n)
+                cand = base + ds
+                h = sha1(enc(cand)).hexdigest()
+
+                if h in remaining_set:
+                    found[h] = cand
+                    remaining_set.remove(h)
+                    remaining.remove(h)
+                    print(f"[{time.strftime('%H:%M:%S')}] [FOUND] {cand} -> {h}")
+
+                count += 1
+                if count % 200000000 == 0 or count == 1:
+                    print(f"[{time.strftime('%H:%M:%S')}] [2WORDNUM] Progress: {count}/{approx_total}")
+
+            # --- Try 2-digit numbers (00–99) ---
+            for n in range(100):
+                ds = f"{n:02d}"
+                cand = base + ds
+                h = sha1(enc(cand)).hexdigest()
+
+                if h in remaining_set:
+                    found[h] = cand
+                    remaining_set.remove(h)
+                    remaining.remove(h)
+                    print(f"[{time.strftime('%H:%M:%S')}] [FOUND] {cand} -> {h}")
+
+                count += 1
+                if count % 200000000 == 0:
+                    print(f"[{time.strftime('%H:%M:%S')}] [2WORDNUM] Progress: {count}/{approx_total}")
+
+    print(f"[{time.strftime('%H:%M:%S')}] [2WORDNUM] DONE — Total found: {len(found)}")
+
+
+
 
 # ----------------
 # Main Cracking 
@@ -356,14 +414,14 @@ import time
 def try_password_patterns(remaining: Set[str], found: Dict[str, str], dictionary: List[str]):
     print(f"[INFO] Starting cracking. Targets: {len(remaining)}, Dictionary: {len(dictionary)}")
 
-    # # ---- STAGE 1 ----
-    # start = time.time()
-    # print(f"[{time.strftime('%H:%M:%S')}] [STAGE 1] Numeric brute force started")
+    # ---- STAGE 1 ----
+    start = time.time()
+    print(f"[{time.strftime('%H:%M:%S')}] [STAGE 1] Numeric brute force started")
 
-    # try_numeric_parallel(remaining, found)
+    try_numeric_parallel(remaining, found)
 
-    # end = time.time()
-    # print(f"[{time.strftime('%H:%M:%S')}] [STAGE 1] Complete (elapsed: {end - start:.2f}s)")
+    end = time.time()
+    print(f"[{time.strftime('%H:%M:%S')}] [STAGE 1] Complete (elapsed: {end - start:.2f}s)")
 
     # ---- STAGE 2 ----
     if remaining:
@@ -375,58 +433,46 @@ def try_password_patterns(remaining: Set[str], found: Dict[str, str], dictionary
         end = time.time()
         print(f"[{time.strftime('%H:%M:%S')}] [STAGE 2] Complete (elapsed: {end - start:.2f}s)")
 
-    # # ---- STAGE 3 ----
-    # if remaining:
-    #     start = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 3] Repeated-word patterns started")
+    # ---- STAGE 3 ----
+    if remaining:
+        start = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 3] Repeated-word patterns started")
 
-    #     try_repeated_words(dictionary, remaining, found)
+        try_repeated_words(dictionary, remaining, found)
 
-    #     end = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 3] Complete (elapsed: {end - start:.2f}s)")
+        end = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 3] Complete (elapsed: {end - start:.2f}s)")
     
-    # # ---- STAGE 4 ----
-    # if remaining:
-    #     start = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] 1 Word and number combinations")
+    # ---- STAGE 4 ----
+    if remaining:
+        start = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] 1 Word and number combinations")
 
-    #     try_word_number_combinations(dictionary, remaining, found)
+        try_word_number_combinations(dictionary, remaining, found)
 
-    #     end = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] Complete (elapsed: {end - start:.2f}s)")
+        end = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 4] Complete (elapsed: {end - start:.2f}s)")
 
     # ---- STAGE 5 ----
     if remaining:
         start = time.time()
         print(f"[{time.strftime('%H:%M:%S')}] [STAGE 5] 2 Word and number combinations")
 
-        try_word_number_combinations(dictionary, remaining, found)
+        try_two_word_number_combinations(dictionary, remaining, found)
 
         end = time.time()
         print(f"[{time.strftime('%H:%M:%S')}] [STAGE 5] Complete (elapsed: {end - start:.2f}s)")
 
-    # # ---- STAGE 6 ----
-    # if remaining:
-    #     start = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 6] Word combinations started for 3 words")
+    # ---- STAGE 6 ----
+    if remaining:
+        start = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 6] Word combinations started for 3 words")
 
-    #     try_word_number_combinations(dictionary, remaining, found)
+        try_word_combinations_first_small_words(dictionary, remaining, found)
 
-    #     end = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE 6] Complete (elapsed: {end - start:.2f}s)")
+        end = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] [STAGE 6] Complete (elapsed: {end - start:.2f}s)")
 
-    
-
-    # # ---- TEST ----
-    # if remaining:
-    #     start = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE TEST] Word and number combinations started")
-
-    #     try_word_combinations_first_small_words(dictionary, remaining, found)
-
-
-    #     end = time.time()
-    #     print(f"[{time.strftime('%H:%M:%S')}] [STAGE TEST] Complete (elapsed: {end - start:.2f}s)")
 
     print(f"[INFO] Cracking finished. Found: {len(found)}, Remaining: {len(remaining)}")
 
